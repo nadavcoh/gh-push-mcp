@@ -17,7 +17,8 @@ npm run build          # production build
 npx tsc --noEmit       # typecheck (run before every commit; set OAUTH_SECRET to any value)
 ```
 
-There is no test suite yet. Typecheck is the minimum bar.
+There is no test suite yet. `npm run build` is the minimum bar before pushing: it also checks route export types,
+which `tsc --noEmit` misses. Set `BASE_URL` and `OAUTH_SECRET` to any values for a local build.
 
 ## Layout
 
