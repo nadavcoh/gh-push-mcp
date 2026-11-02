@@ -12,10 +12,17 @@ long-lived personal access token ever sits in a chat, a skill, or a config file.
 
 | Tool | What it does |
 |---|---|
+| `list_branches(repo)` | Lists branches with head SHAs and shows the default branch. Read-only. |
+| `list_commits(repo, ref?, limit?)` | Recent commits (newest first, max 50) plus the full head SHA. Read-only. |
+| `list_files(repo, ref?, path?)` | Every file at a ref with sizes, optionally under a directory (max 1000 shown). Read-only. |
+| `read_file(repo, path, ref?)` | One text file at a ref, truncated at 100k characters. Binary files aren't shown. Read-only. |
 | `create_branch(repo, branch, from?)` | Creates a branch from `from`, or from the repo's default branch if omitted. |
 | `commit_files(repo, branch, message, files[])` | Commits up to 100 files in a single commit via the Git Data API. Each file is `{ path, content, encoding }` with `encoding` of `utf-8` or `base64`. |
 
 `repo` can be a bare name (owner defaults to `GITHUB_OWNER`) or `owner/name`.
+
+The server's instructions tell Claude to clone and inspect a repo before pushing. The read tools cover
+the case where cloning isn't possible, such as private repos or clients with no shell.
 
 Writes to `main`, `master` and the default branch are allowed. Force-pushes are not: refs are updated with
 `force: false`. Paths that are absolute, contain `..`, start with `.git/`, or start with `.github/workflows`

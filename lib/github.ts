@@ -51,3 +51,60 @@ export async function commitFiles(repoArg: string, branch: string, message: stri
   await o.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: c.data.sha, force: false });
   return c.data.sha;
 }
+
+const MAX_TEXT = 100_000;
+const defaultBranch = async (o: Octokit, owner: string, repo: string) =>
+  (await o.repos.get({ owner, repo })).data.default_branch;
+
+export async function listBranches(repoArg: string) {
+  const o = octo();
+  const { owner, repo } = parseRepo(repoArg);
+  const [def, { data }] = await Promise.all([
+    defaultBranch(o, owner, repo),
+    o.repos.listBranches({ owner, repo, per_page: 100 }),
+  ]);
+  const lines = data.map(b => `${b.name}\t${b.commit.sha.slice(0, 12)}${b.protected ? "\tprotected" : ""}`);
+  return `default: ${def}\n${lines.join("\n")}`;
+}
+
+export async function listCommits(repoArg: string, ref?: string, limit = 10) {
+  const o = octo();
+  const { owner, repo } = parseRepo(repoArg);
+  const { data } = await o.repos.listCommits({
+    owner, repo, sha: ref ?? (await defaultBranch(o, owner, repo)), per_page: Math.min(Math.max(limit, 1), 50),
+  });
+  if (!data.length) return "No commits";
+  const lines = data.map(c =>
+    `${c.sha.slice(0, 12)} ${c.commit.author?.date?.slice(0, 10) ?? ""} ${c.commit.author?.name ?? ""}: ${c.commit.message.split("\n")[0]}`);
+  return `head: ${data[0].sha}\n${lines.join("\n")}`;
+}
+
+export async function listFiles(repoArg: string, ref?: string, prefix?: string) {
+  const o = octo();
+  const { owner, repo } = parseRepo(repoArg);
+  const r = ref ?? (await defaultBranch(o, owner, repo));
+  const { data } = await o.git.getTree({ owner, repo, tree_sha: r, recursive: "1" });
+  const p = prefix?.replace(/^\/+|\/+$/g, "");
+  const all = data.tree.filter(t => t.type === "blob" && (!p || t.path === p || t.path!.startsWith(`${p}/`)));
+  const shown = all.slice(0, 1000);
+  const note = data.truncated || all.length > shown.length
+    ? `\n[truncated: showing ${shown.length} of ${all.length}${data.truncated ? "+" : ""}; narrow with path]` : "";
+  return `ref: ${r} (tree ${data.sha.slice(0, 12)})\npath\tbytes\n${shown.map(t => `${t.path}\t${t.size ?? 0}`).join("\n")}${note}`;
+}
+
+export async function readFile(repoArg: string, path: string, ref?: string) {
+  const o = octo();
+  const { owner, repo } = parseRepo(repoArg);
+  const { data } = await o.repos.getContent({ owner, repo, path, ref });
+  if (Array.isArray(data) || data.type !== "file") throw new Error(`Not a file: ${path}`);
+  const b64 = "content" in data && data.content
+    ? data.content
+    : (await o.git.getBlob({ owner, repo, file_sha: data.sha })).data.content;
+  const buf = Buffer.from(b64, "base64");
+  const head = `${path} @ ${ref ?? "default branch"} (blob ${data.sha.slice(0, 12)}, ${buf.length} bytes)`;
+  if (buf.includes(0)) return `${head}\n[binary file, not shown]`;
+  const t = buf.toString("utf-8");
+  return t.length > MAX_TEXT
+    ? `${head}\n${t.slice(0, MAX_TEXT)}\n[truncated at ${MAX_TEXT} characters]`
+    : `${head}\n${t}`;
+}
