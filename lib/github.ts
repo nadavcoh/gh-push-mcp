@@ -89,7 +89,7 @@ export async function listFiles(repoArg: string, ref?: string, prefix?: string) 
   const shown = all.slice(0, 1000);
   const note = data.truncated || all.length > shown.length
     ? `\n[truncated: showing ${shown.length} of ${all.length}${data.truncated ? "+" : ""}; narrow with path]` : "";
-  return `ref: ${r} (tree ${data.sha.slice(0, 12)})\npath\tbytes\n${shown.map(t => `${t.path}\t${t.size ?? 0}`).join("\n")}${note}`;
+  return `ref: ${r} @ ${data.sha.slice(0, 12)}\npath\tbytes\n${shown.map(t => `${t.path}\t${t.size ?? 0}`).join("\n")}${note}`;
 }
 
 export async function readFile(repoArg: string, path: string, ref?: string) {
