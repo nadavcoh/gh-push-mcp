@@ -2,7 +2,7 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 import { verify } from "@/lib/jwt";
 import {
-  commitFiles, createBranch, listBranches, listCommits, listFiles, readFile,
+  commitFiles, createBranch, editFile, listBranches, listCommits, listFiles, readFile,
 } from "@/lib/github";
 
 const INSTRUCTIONS =
@@ -12,7 +12,8 @@ const INSTRUCTIONS =
   "If you cannot clone the repo (no shell access, or it is private), inspect it with this server's read tools " +
   "instead: list_branches, list_commits, list_files and read_file. Read every file you plan to change, and its " +
   "neighbours, before committing. Verify your changes (build/typecheck/tests where available), and only then " +
-  "call commit_files. If you can do neither, say so and ask the user before pushing.";
+  "call commit_files or edit_file. For small changes to existing files, prefer edit_file: send only the changed " +
+  "snippets instead of the whole file. If you can do neither, say so and ask the user before pushing.";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const ro = { readOnlyHint: true };
@@ -50,16 +51,34 @@ const handler = createMcpHandler((server) => {
     async (a) => text(`Created ${a.branch} at ${await createBranch(a.repo, a.branch, a.from)}`)
   );
   server.tool(
+    "edit_file",
+    "Edit one existing text file in place using exact-match replacements, and commit it. Prefer this over " +
+    "commit_files for small changes: send only the changed snippets. Each old_str must match exactly once " +
+    "(or set replace_all).",
+    {
+      repo, branch: z.string(), path: z.string(), message: z.string(),
+      edits: z.array(z.object({
+        old_str: z.string().min(1), new_str: z.string(), replace_all: z.boolean().optional(),
+      })).min(1).max(50),
+    },
+    async (a) => text(`Committed ${await editFile(a.repo, a.branch, a.path, a.edits, a.message)}`)
+  );
+  server.tool(
     "commit_files",
-    "Commit files to a branch in one commit. Clone and inspect the repo first (or use list_files/read_file), then push.",
+    "Create, overwrite and/or delete files on a branch in one commit. Clone and inspect the repo first (or use " +
+    "list_files/read_file), then push. For small edits to an existing file, use edit_file instead.",
     {
       repo, branch: z.string(), message: z.string(),
       files: z.array(z.object({
         path: z.string(), content: z.string(),
         encoding: z.enum(["utf-8", "base64"]).default("utf-8"),
-      })).min(1).max(100),
+      })).max(100).default([]),
+      delete: z.array(z.string()).max(100).default([]).describe("Paths of files to delete in this commit"),
     },
-    async (a) => text(`Committed ${await commitFiles(a.repo, a.branch, a.message, a.files)}`)
+    async (a) => {
+      const sha = await commitFiles(a.repo, a.branch, a.message, a.files, a.delete);
+      return text(`Committed ${sha} (${a.files.length} written, ${a.delete.length} deleted)`);
+    }
   );
 }, { instructions: INSTRUCTIONS }, { basePath: "/api" });
 

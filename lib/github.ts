@@ -29,32 +29,78 @@ export async function createBranch(repoArg: string, branch: string, from?: strin
 }
 
 type F = { path: string; content: string; encoding: "utf-8" | "base64" };
+type Edit = { old_str: string; new_str: string; replace_all?: boolean };
 
-export async function commitFiles(repoArg: string, branch: string, message: string, files: F[]) {
-  const o = octo();
-  const { owner, repo } = parseRepo(repoArg);
-  for (const f of files) {
-    if (f.path.startsWith("/") || f.path.includes("..") ||
-        f.path.startsWith(".git/") || f.path.startsWith(".github/workflows"))
-      throw new Error(`Bad path: ${f.path}`);
-  }
-  const ref = await o.git.getRef({ owner, repo, ref: `heads/${branch}` });
-  const base = await o.git.getCommit({ owner, repo, commit_sha: ref.data.object.sha });
-  const tree = await Promise.all(files.map(async f => {
+function checkPath(p: string) {
+  if (!p || p.startsWith("/") || p.includes("..") || p.startsWith(".git/") || p.startsWith(".github/workflows"))
+    throw new Error(`Bad path: ${p}`);
+}
+
+// Commits on top of `headSha` (or the branch's current head). The ref update is non-force, so it fails
+// instead of overwriting if the branch moved in the meantime.
+async function commit(
+  o: Octokit, owner: string, repo: string, branch: string, message: string,
+  files: F[], deletes: string[], headSha?: string,
+) {
+  if (!files.length && !deletes.length) throw new Error("Nothing to commit");
+  [...files.map(f => f.path), ...deletes].forEach(checkPath);
+  const overlap = deletes.filter(d => files.some(f => f.path === d));
+  if (overlap.length) throw new Error(`Path is both written and deleted: ${overlap[0]}`);
+  const parent = headSha ?? (await o.git.getRef({ owner, repo, ref: `heads/${branch}` })).data.object.sha;
+  const base = await o.git.getCommit({ owner, repo, commit_sha: parent });
+  const written = await Promise.all(files.map(async f => {
     const b = await o.git.createBlob({ owner, repo, content: f.content, encoding: f.encoding });
-    return { path: f.path, mode: "100644" as const, type: "blob" as const, sha: b.data.sha };
+    return { path: f.path, mode: "100644" as const, type: "blob" as const, sha: b.data.sha as string | null };
   }));
-  const t = await o.git.createTree({ owner, repo, base_tree: base.data.tree.sha, tree });
-  const c = await o.git.createCommit({
-    owner, repo, message, tree: t.data.sha, parents: [ref.data.object.sha],
-  });
+  const removed = deletes.map(path => ({ path, mode: "100644" as const, type: "blob" as const, sha: null as string | null }));
+  const t = await o.git.createTree({ owner, repo, base_tree: base.data.tree.sha, tree: [...written, ...removed] });
+  const c = await o.git.createCommit({ owner, repo, message, tree: t.data.sha, parents: [parent] });
   await o.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: c.data.sha, force: false });
   return c.data.sha;
+}
+
+export async function commitFiles(repoArg: string, branch: string, message: string, files: F[], deletes: string[] = []) {
+  const o = octo();
+  const { owner, repo } = parseRepo(repoArg);
+  return commit(o, owner, repo, branch, message, files, deletes);
+}
+
+export async function editFile(repoArg: string, branch: string, path: string, edits: Edit[], message: string) {
+  const o = octo();
+  const { owner, repo } = parseRepo(repoArg);
+  checkPath(path);
+  const head = (await o.git.getRef({ owner, repo, ref: `heads/${branch}` })).data.object.sha;
+  const original = await fetchText(o, owner, repo, path, head);
+  let text = original;
+  edits.forEach((e, i) => {
+    const n = text.split(e.old_str).length - 1;
+    if (n === 0) throw new Error(`Edit ${i + 1}: old_str not found in ${path}`);
+    if (n > 1 && !e.replace_all)
+      throw new Error(`Edit ${i + 1}: old_str matches ${n} times; add surrounding context or set replace_all`);
+    text = e.replace_all ? text.split(e.old_str).join(e.new_str) : text.replace(e.old_str, () => e.new_str);
+  });
+  if (text === original) throw new Error("Edits produced no change");
+  return commit(o, owner, repo, branch, message, [{ path, content: text, encoding: "utf-8" }], [], head);
 }
 
 const MAX_TEXT = 100_000;
 const defaultBranch = async (o: Octokit, owner: string, repo: string) =>
   (await o.repos.get({ owner, repo })).data.default_branch;
+
+async function fetchBytes(o: Octokit, owner: string, repo: string, path: string, ref?: string) {
+  const { data } = await o.repos.getContent({ owner, repo, path, ref });
+  if (Array.isArray(data) || data.type !== "file") throw new Error(`Not a file: ${path}`);
+  const b64 = "content" in data && data.content
+    ? data.content
+    : (await o.git.getBlob({ owner, repo, file_sha: data.sha })).data.content;
+  return { sha: data.sha, buf: Buffer.from(b64, "base64") };
+}
+
+async function fetchText(o: Octokit, owner: string, repo: string, path: string, ref?: string) {
+  const { buf } = await fetchBytes(o, owner, repo, path, ref);
+  if (buf.includes(0)) throw new Error(`${path} is a binary file; use commit_files`);
+  return buf.toString("utf-8");
+}
 
 export async function listBranches(repoArg: string) {
   const o = octo();
@@ -95,13 +141,8 @@ export async function listFiles(repoArg: string, ref?: string, prefix?: string) 
 export async function readFile(repoArg: string, path: string, ref?: string) {
   const o = octo();
   const { owner, repo } = parseRepo(repoArg);
-  const { data } = await o.repos.getContent({ owner, repo, path, ref });
-  if (Array.isArray(data) || data.type !== "file") throw new Error(`Not a file: ${path}`);
-  const b64 = "content" in data && data.content
-    ? data.content
-    : (await o.git.getBlob({ owner, repo, file_sha: data.sha })).data.content;
-  const buf = Buffer.from(b64, "base64");
-  const head = `${path} @ ${ref ?? "default branch"} (blob ${data.sha.slice(0, 12)}, ${buf.length} bytes)`;
+  const { sha, buf } = await fetchBytes(o, owner, repo, path, ref);
+  const head = `${path} @ ${ref ?? "default branch"} (blob ${sha.slice(0, 12)}, ${buf.length} bytes)`;
   if (buf.includes(0)) return `${head}\n[binary file, not shown]`;
   const t = buf.toString("utf-8");
   return t.length > MAX_TEXT
