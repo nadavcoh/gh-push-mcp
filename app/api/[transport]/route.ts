@@ -2,7 +2,7 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 import { z } from "zod";
 import { verify } from "@/lib/jwt";
 import {
-  commitFiles, createBranch, editFile, listBranches, listCommits, listFiles, readFile,
+  commitFiles, createBranch, editFile, gitCredentials, listBranches, listCommits, listFiles, readFile,
 } from "@/lib/github";
 
 const INSTRUCTIONS =
@@ -13,7 +13,12 @@ const INSTRUCTIONS =
   "instead: list_branches, list_commits, list_files and read_file. Read every file you plan to change, and its " +
   "neighbours, before committing. Verify your changes (build/typecheck/tests where available), and only then " +
   "call commit_files or edit_file. For small changes to existing files, prefer edit_file: send only the changed " +
-  "snippets instead of the whole file. If you can do neither, say so and ask the user before pushing.";
+  "snippets instead of the whole file. " +
+  "For multi-file, large or binary changes, or to clone a private repo, call git_credentials (mode read to " +
+  "clone and inspect, mode write only when ready to push) and use real git from your sandbox. Pass the token " +
+  "to git through an http.extraheader; never print it, write it to disk or put it in a URL, and never " +
+  "force-push or delete branches. " +
+  "If you can do neither, say so and ask the user before pushing.";
 
 const text = (t: string) => ({ content: [{ type: "text" as const, text: t }] });
 const ro = { readOnlyHint: true };
@@ -44,6 +49,15 @@ const handler = createMcpHandler((server) => {
     { repo, path: z.string(), ref: z.string().optional().describe("Branch, tag or SHA; defaults to the default branch") },
     ro,
     async (a) => text(await readFile(a.repo, a.path, a.ref))
+  );
+  server.tool(
+    "git_credentials",
+    "Issue a short-lived GitHub token (about 1 hour) limited to one repo and to Contents read or write, for " +
+    "using real git (clone, commit, push) from your own shell. Use mode=read to clone and inspect; request " +
+    "mode=write only when ready to push. Pass it to git via an http.extraheader; never print it, store it or " +
+    "put it in a remote URL.",
+    { repo, mode: z.enum(["read", "write"]).default("read") },
+    async (a) => text(await gitCredentials(a.repo, a.mode))
   );
   server.tool(
     "create_branch", "Create a branch from an existing one (defaults to the repo's default branch)",
