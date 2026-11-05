@@ -53,7 +53,17 @@ async function commit(
     return { path: f.path, mode: "100644" as const, type: "blob" as const, sha: b.data.sha as string | null };
   }));
   const removed = deletes.map(path => ({ path, mode: "100644" as const, type: "blob" as const, sha: null as string | null }));
-  const t = await o.git.createTree({ owner, repo, base_tree: base.data.tree.sha, tree: [...written, ...removed] });
+  const t = await o.git.createTree({
+    owner, repo, base_tree: base.data.tree.sha, tree: [...written, ...removed],
+  }).catch(async (err: unknown) => {
+    if (deletes.length) {
+      const { data } = await o.git.getTree({ owner, repo, tree_sha: base.data.tree.sha, recursive: "1" });
+      const have = new Set(data.tree.map(e => e.path));
+      const missing = deletes.filter(d => !have.has(d));
+      if (missing.length) throw new Error(`Cannot delete, not found on ${branch}: ${missing.join(", ")}`);
+    }
+    throw err;
+  });
   const c = await o.git.createCommit({ owner, repo, message, tree: t.data.sha, parents: [parent] });
   await o.git.updateRef({ owner, repo, ref: `heads/${branch}`, sha: c.data.sha, force: false });
   return c.data.sha;
