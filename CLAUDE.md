@@ -37,6 +37,8 @@ which `tsc --noEmit` misses. Set `BASE_URL` and `OAUTH_SECRET` to any values for
 - Git updates must stay `force: false`. Keep the path checks in `commitFiles`.
 - Writes to default branches are intentionally allowed. Don't re-add branch or repo guards unless asked.
 - Don't log tokens, codes, JWTs, private keys or env values.
+- `git_credentials` tokens must stay single-repo, Contents-only and short-lived. Never log or persist them; they
+  only appear in the tool result. Log the repo and mode only.
 - Never commit secrets. `.env*` is gitignored; `.env.example` holds names only.
 
 ## Dependency pins
