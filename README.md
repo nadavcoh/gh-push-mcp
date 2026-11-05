@@ -17,7 +17,8 @@ long-lived personal access token ever sits in a chat, a skill, or a config file.
 | `list_files(repo, ref?, path?)` | Every file at a ref with sizes, optionally under a directory (max 1000 shown). Read-only. |
 | `read_file(repo, path, ref?)` | One text file at a ref, truncated at 100k characters. Binary files aren't shown. Read-only. |
 | `create_branch(repo, branch, from?)` | Creates a branch from `from`, or from the repo's default branch if omitted. |
-| `commit_files(repo, branch, message, files[])` | Commits up to 100 files in a single commit via the Git Data API. Each file is `{ path, content, encoding }` with `encoding` of `utf-8` or `base64`. |
+| `edit_file(repo, branch, path, edits[], message)` | Edits one existing text file in place. Each edit is `{ old_str, new_str, replace_all? }`, and `old_str` must match exactly once unless `replace_all` is set. Send only the changed snippets instead of the whole file. |
+| `commit_files(repo, branch, message, files[], delete[]?)` | Writes up to 100 files and/or deletes up to 100 paths in a single commit via the Git Data API. Each file is `{ path, content, encoding }` with `encoding` of `utf-8` or `base64`. |
 
 `repo` can be a bare name (owner defaults to `GITHUB_OWNER`) or `owner/name`.
 
