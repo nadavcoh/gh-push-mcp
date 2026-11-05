@@ -93,6 +93,29 @@ export async function editFile(repoArg: string, branch: string, path: string, ed
   return commit(o, owner, repo, branch, message, [{ path, content: text, encoding: "utf-8" }], [], head);
 }
 
+export async function gitCredentials(repoArg: string, mode: "read" | "write") {
+  const { owner, repo } = parseRepo(repoArg);
+  if (owner.toLowerCase() !== OWNER.toLowerCase()) throw new Error(`Only repos owned by ${OWNER} are supported`);
+  const auth = createAppAuth({
+    appId: process.env.GITHUB_APP_ID!,
+    privateKey: process.env.GITHUB_APP_PRIVATE_KEY!.replace(/\\n/g, "\n"),
+    installationId: Number(process.env.GITHUB_INSTALLATION_ID!),
+  });
+  const { token, expiresAt } = await auth({
+    type: "installation", repositoryNames: [repo], permissions: { contents: mode },
+  });
+  console.log(`git_credentials issued: ${owner}/${repo} ${mode}`);
+  return [
+    `Token for ${owner}/${repo} (Contents: ${mode}, expires ${expiresAt}):`,
+    token,
+    "",
+    "Use it without printing it:",
+    `  H="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"`,
+    `  git -c credential.helper= -c http.extraheader="$H" clone https://github.com/${owner}/${repo}.git`,
+    "Never echo the token, write it to disk, or put it in a remote URL. Never force-push or delete branches.",
+  ].join("\n");
+}
+
 const MAX_TEXT = 100_000;
 const defaultBranch = async (o: Octokit, owner: string, repo: string) =>
   (await o.repos.get({ owner, repo })).data.default_branch;
