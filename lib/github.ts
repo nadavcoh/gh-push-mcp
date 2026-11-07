@@ -31,8 +31,12 @@ export async function createBranch(repoArg: string, branch: string, from?: strin
 type F = { path: string; content: string; encoding: "utf-8" | "base64" };
 type Edit = { old_str: string; new_str: string; replace_all?: boolean };
 
+// Only deploy workflows (deploy.yml, deploy-*.yml, directly in .github/workflows) may be written.
+const DEPLOY_WORKFLOW = /^\.github\/workflows\/deploy(-[A-Za-z0-9._-]+)?\.ya?ml$/;
+
 function checkPath(p: string) {
-  if (!p || p.startsWith("/") || p.includes("..") || p.startsWith(".git/") || p.startsWith(".github/workflows"))
+  if (!p || p.startsWith("/") || p.includes("..") || p.startsWith(".git/") ||
+    (p.startsWith(".github/workflows") && !DEPLOY_WORKFLOW.test(p)))
     throw new Error(`Bad path: ${p}`);
 }
 
