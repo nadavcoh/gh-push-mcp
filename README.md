@@ -1,8 +1,9 @@
 # gh-push-mcp
 
-A small MCP server that lets Claude push commits to your GitHub repos. It runs as a Next.js app on Vercel,
-protects itself with OAuth 2.1, and writes to GitHub through a GitHub App installation token, so no
-long-lived personal access token ever sits in a chat, a skill, or a config file.
+A small MCP server that lets Claude inspect, edit and push to your GitHub repos. It runs as a Next.js app on Vercel,
+protects itself with OAuth 2.1, and works through a GitHub App installation token, so no long-lived personal
+access token ever sits in a chat, a skill, or a config file. It can read repos, edit files in place, commit and
+delete files, and hand Claude's sandbox a short-lived token for real git.
 
 - **MCP endpoint:** `/api/mcp` (Streamable HTTP)
 - **Auth:** built-in OAuth 2.1 server (PKCE + dynamic client registration), login restricted to one GitHub user ID
@@ -23,8 +24,29 @@ long-lived personal access token ever sits in a chat, a skill, or a config file.
 
 `repo` can be a bare name (owner defaults to `GITHUB_OWNER`) or `owner/name`.
 
-The server's instructions tell Claude to clone and inspect a repo before pushing. The read tools cover
-the case where cloning isn't possible, such as private repos or clients with no shell.
+`edit_file` and `commit_files` build the commit on the branch head they just read and update the ref with
+`force: false`, so they fail instead of overwriting if the branch moved in the meantime.
+
+The server's instructions (the `INSTRUCTIONS` constant in `app/api/[transport]/route.ts`) tell Claude to clone and
+inspect a repo before pushing. The read tools cover clients that can't clone. The instructions also steer Claude to
+the cheapest tool for the job:
+
+- **Small change to an existing file:** `edit_file`, which sends only the changed snippets.
+- **A few new files, or deletions:** `commit_files`.
+- **Many, large or binary files, or cloning a private repo:** `git_credentials`, then real git.
+
+### Using real git
+
+Call `git_credentials` with `mode` set to `read` to clone and inspect, and `write` only when ready to push. Pass the
+token to git through a header, never in a URL, and never print or store it:
+
+```bash
+H="Authorization: Basic $(printf 'x-access-token:%s' "$TOKEN" | base64 -w0)"
+git -c credential.helper= -c http.extraheader="$H" clone https://github.com/<owner>/<repo>.git
+```
+
+The token covers one repo and Contents only, and GitHub expires it after about an hour. Use the repo's current name:
+a renamed repo is rejected until you use the new name. The sandbox must be able to reach `github.com`.
 
 Writes to `main`, `master` and the default branch are allowed. Force-pushes are not: refs are updated with
 `force: false`. Paths that are absolute, contain `..`, start with `.git/`, or start with `.github/workflows` (except `deploy.yml` and `deploy-*.yml` directly in that folder)
@@ -95,6 +117,7 @@ npm install
 cp .env.example .env.local   # fill in the values
 npm run dev
 npx tsc --noEmit             # typecheck
+BASE_URL=https://example.com OAUTH_SECRET=x npm run build   # also checks route export types; run before pushing
 ```
 
 For the OAuth flow to work locally, `BASE_URL` must be a public HTTPS URL (a tunnel works), and the GitHub App's
@@ -127,6 +150,12 @@ callback URL must match it.
 | `github auth failed` | Wrong client ID/secret, or the callback URL doesn't match `BASE_URL` |
 | 401 from `/api/mcp` | Missing or expired access token; reconnect the connector |
 | `Resource not accessible by integration` | The App isn't installed on that repo, or lacks Contents: write |
+| `...does not exist or is not accessible to the parent installation` (from `git_credentials`) | The repo name is wrong or was renamed (use the current name), or the App isn't installed on it |
+| `Not Found ... get-a-reference` | The branch doesn't exist, or the repo name is wrong or not installed |
+| `Edit N: old_str not found` or `old_str matches N times` | `edit_file` needs each `old_str` to match exactly once; add surrounding context or set `replace_all` |
+| `Cannot delete, not found on <branch>` | A path in `delete` doesn't exist on that branch |
+| `Path is both written and deleted` | The same path is in both `files` and `delete` |
+| A new tool doesn't show up in an open chat | Clients read the tool list when they connect; reconnect the connector or start a new chat |
 | `Bad path: .github/workflows/...` | Only top-level `deploy.yml` and `deploy-*.yml` are allowed there; `checkPath` blocks other workflow names |
 | GitHub rejects a pushed workflow file | The App lacks Workflows: Read and write, or the updated permissions weren't accepted on the installation |
 | Invalid key / PEM errors | `GITHUB_APP_PRIVATE_KEY` lost its `\n` newlines when pasted |
