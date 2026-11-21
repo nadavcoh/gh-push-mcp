@@ -26,7 +26,7 @@ which `tsc --noEmit` misses. Set `BASE_URL` and `OAUTH_SECRET` to any values for
 - `app/.well-known/*`: OAuth discovery metadata (protected resource and authorization server)
 - `app/register`, `app/authorize`, `app/callback/github`, `app/token`: the OAuth flow
 - `lib/jwt.ts`: sign/verify helpers; every token type has its own audience
-- `lib/github.ts`: Octokit via GitHub App installation auth; `createBranch` and `commitFiles`
+- `lib/github.ts`: Octokit via GitHub App installation auth; `createBranch` and `commitFiles`; `checkPath` (the path guard, including the `DEPLOY_WORKFLOW` exception)
 
 ## Conventions and invariants
 
@@ -35,6 +35,10 @@ which `tsc --noEmit` misses. Set `BASE_URL` and `OAUTH_SECRET` to any values for
   required, and redirect URIs must stay restricted to `claude.ai` / `claude.com`.
 - Keep distinct JWT audiences (`client`, `gh-state`, `code`, `access`, `refresh`). Don't reuse one for another.
 - Git updates must stay `force: false`. Keep the path checks in `commitFiles`.
+- `checkPath` blocks `.github/workflows` except top-level `deploy.yml` and `deploy-*.yml` (the `DEPLOY_WORKFLOW`
+  regex, added at the owner's request). Don't widen that exception without being asked. GitHub also only accepts
+  such pushes if the App has Workflows: Read and write and the installation accepted it; `git_credentials` tokens
+  stay Contents-only, so raw git can't push workflow files.
 - Writes to default branches are intentionally allowed. Don't re-add branch or repo guards unless asked.
 - Don't log tokens, codes, JWTs, private keys or env values.
 - `git_credentials` tokens must stay single-repo, Contents-only and short-lived. Never log or persist them; they
@@ -51,4 +55,4 @@ both together and update the tool registration if you do.
 
 Register it in `app/api/[transport]/route.ts` with `server.tool(name, description, zodShape, handler)`, put the
 GitHub logic in `lib/github.ts`, and return `{ content: [{ type: "text", text }] }`. Check that the GitHub App
-has the permission the new call needs; Contents is the only one granted by default.
+has the permission the new call needs; Contents is the only one required by default (Workflows is optional, only for deploy workflow files).
