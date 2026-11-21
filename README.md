@@ -27,7 +27,7 @@ The server's instructions tell Claude to clone and inspect a repo before pushing
 the case where cloning isn't possible, such as private repos or clients with no shell.
 
 Writes to `main`, `master` and the default branch are allowed. Force-pushes are not: refs are updated with
-`force: false`. Paths that are absolute, contain `..`, start with `.git/`, or start with `.github/workflows`
+`force: false`. Paths that are absolute, contain `..`, start with `.git/`, or start with `.github/workflows` (except `deploy.yml` and `deploy-*.yml` directly in that folder)
 are rejected.
 
 ## How it works
@@ -52,7 +52,7 @@ GitHub > Settings > Developer settings > GitHub Apps > New GitHub App.
 
 - **Callback URL:** `https://<your-domain>/callback/github`
 - **Webhook:** uncheck "Active"
-- **Repository permissions:** Contents: Read and write (Metadata: Read is added automatically)
+- **Repository permissions:** Contents: Read and write (Metadata: Read is added automatically). Also set **Workflows: Read and write** if Claude should push `deploy*.yml` workflow files; GitHub rejects any push that touches workflow files without it, and you must accept the updated permissions on the installation
 - **Where can it be installed:** Only on this account
 
 Then:
@@ -105,6 +105,7 @@ callback URL must match it.
 - Only the GitHub account whose numeric ID is in `ALLOWED_GITHUB_ID` can sign in. IDs are used rather than
   usernames because usernames can be renamed and reclaimed.
 - The App can only touch repos it is installed on. Keep the installation on "Only select repositories".
+- Workflow files can run code with a repo's secrets. Only top-level `deploy.yml` and `deploy-*.yml` are writable (`DEPLOY_WORKFLOW` in `lib/github.ts`), and only if the App has Workflows: write. Every other path under `.github/workflows` is blocked. Workflow files are not covered by Contents-only tokens from `git_credentials`, so raw git can't push them either.
 - Auth codes are stateless and valid for 2 minutes, so a code can be replayed within that window. PKCE makes this
   hard to exploit. Add a store (e.g. Vercel KV) if you need strict single use.
 - Refresh tokens can't be revoked individually. Rotating `OAUTH_SECRET` invalidates every token.
@@ -126,4 +127,6 @@ callback URL must match it.
 | `github auth failed` | Wrong client ID/secret, or the callback URL doesn't match `BASE_URL` |
 | 401 from `/api/mcp` | Missing or expired access token; reconnect the connector |
 | `Resource not accessible by integration` | The App isn't installed on that repo, or lacks Contents: write |
+| `Bad path: .github/workflows/...` | Only top-level `deploy.yml` and `deploy-*.yml` are allowed there; `checkPath` blocks other workflow names |
+| GitHub rejects a pushed workflow file | The App lacks Workflows: Read and write, or the updated permissions weren't accepted on the installation |
 | Invalid key / PEM errors | `GITHUB_APP_PRIVATE_KEY` lost its `\n` newlines when pasted |
